@@ -1,0 +1,86 @@
+name: 验证钱包
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_workers:
+        description: '并发线程数（建议3-5）'
+        required: true
+        default: '5'
+        type: choice
+        options:
+          - '3'
+          - '5'
+          - '8'
+      rate_limit:
+        description: '请求间隔（秒）'
+        required: true
+        default: '0.5'
+        type: choice
+        options:
+          - '0.3'
+          - '0.5'
+          - '0.8'
+          - '1.0'
+      runtime_minutes:
+        description: '运行时间（分钟）'
+        required: true
+        default: '360'
+        type: number
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 420  # 7小时（给6小时运行+1小时缓冲）
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 设置Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: 安装依赖
+        run: |
+          pip install mnemonic bip-utils requests tqdm urllib3
+      
+      - name: 运行验证（持续6小时）
+        env:
+          MAX_WORKERS: ${{ github.event.inputs.max_workers || '5' }}
+          RATE_LIMIT: ${{ github.event.inputs.rate_limit || '0.5' }}
+          RUNTIME_MINUTES: ${{ github.event.inputs.runtime_minutes || '360' }}
+        run: |
+          python verifier.py
+      
+      - name: 提交结果到仓库
+        if: always()
+        run: |
+          git config --global user.name "Wallet Bot"
+          git config --global user.email "bot@wallet.local"
+          
+          git add FOUND_WALLETS_*.txt MNEMONICS_FOUND_*.txt PROGRESS_*.txt 2>/dev/null || true
+          
+          if git diff --staged --quiet; then
+            echo "📭 没有新钱包"
+          else
+            git commit -m "✅ 自动提交找到的钱包 [skip ci]"
+            git push origin HEAD:main
+            echo "✅ 结果已提交到仓库"
+          fi
+      
+      - name: 保存运行日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ github.run_id }}
+          path: |
+            *.log
+            progress_*.txt
+          retention-days: 7
